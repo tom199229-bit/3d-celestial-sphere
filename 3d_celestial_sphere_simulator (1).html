@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D 天球星空與太陽軌跡模擬器</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+        body { font-family: 'PingFang TC', 'Microsoft JhengHei', sans-serif; background: #080a0f; color: #e2e8f0; overflow: hidden; height: 100vh; display: flex; position: relative; }
+        #canvas-container { flex: 1; height: 100%; position: relative; background: #000; width: 100%; }
+        
+        /* 星軌專用 2D Canvas Overlay */
+        #trail-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 2;
+        }
+
+        /* 控制面板 UI */
+        .control-panel {
+            position: absolute;
+            right: 0;
+            top: 0;
+            height: 100%;
+            width: 320px;
+            background: rgba(15, 23, 42, 0.94);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-left: 1px solid rgba(255, 255, 255, 0.15);
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            z-index: 20;
+            overflow-y: auto;
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: -4px 0 25px rgba(0,0,0,0.6);
+        }
+
+        /* 收合狀態樣式 */
+        .control-panel.collapsed {
+            transform: translateX(100%);
+        }
+
+        /* 頂部固定/醒目的面板開關按鈕 (獨立於面板外，隨時可見) */
+        .panel-toggle-btn {
+            position: fixed;
+            top: 16px;
+            right: 16px;
+            z-index: 30;
+            background: #0284c7;
+            color: #ffffff;
+            border: 2px solid #38bdf8;
+            border-radius: 8px;
+            padding: 8px 14px;
+            font-size: 0.88rem;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+            transition: all 0.2s ease;
+        }
+        .panel-toggle-btn:hover {
+            background: #0369a1;
+            border-color: #7dd3fc;
+            transform: translateY(-1px);
+        }
+
+        /* 當面板未收合時，把按鈕移至面板標題旁 */
+        .panel-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid rgba(255,255,255,0.15);
+            padding-bottom: 8px;
+            margin-bottom: 4px;
+        }
+        .panel-header h2 {
+            font-size: 1.05rem;
+            font-weight: bold;
+            color: #38bdf8;
+            border: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .control-group { display: flex; flex-direction: column; gap: 6px; }
+        label { font-size: 0.82rem; color: #94a3b8; display: flex; justify-content: space-between; align-items: center; }
+        .val-badge { background: #1e293b; color: #38bdf8; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.8rem; }
+        input[type="range"] { width: 100%; accent-color: #38bdf8; cursor: pointer; }
+        
+        .btn-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+        .btn-grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+        button.action-btn {
+            background: #1e293b; color: #e2e8f0; border: 1px solid rgba(255,255,255,0.15);
+            padding: 8px 10px; border-radius: 6px; cursor: pointer; font-size: 0.82rem;
+            transition: all 0.2s ease;
+        }
+        button.action-btn:hover { background: #334155; border-color: #38bdf8; }
+        button.action-btn.active { background: #0284c7; color: #fff; border-color: #38bdf8; font-weight: bold; }
+        
+        .toggle-row { display: flex; align-items: center; justify-content: space-between; font-size: 0.85rem; cursor: pointer; }
+        .toggle-row input { cursor: pointer; width: 16px; height: 16px; accent-color: #38bdf8; }
+        
+        /* 四季太陽軌跡子清單 */
+        .sub-group { margin-left: 8px; padding-left: 8px; border-left: 2px solid rgba(56, 189, 248, 0.3); display: flex; flex-direction: column; gap: 6px; }
+
+        /* 左上角提示資訊卡 */
+        .info-overlay {
+            position: absolute; top: 16px; left: 16px;
+            background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            padding: 12px 18px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);
+            pointer-events: none;
+            z-index: 5;
+            max-width: calc(100% - 180px);
+        }
+        .info-overlay h1 { font-size: 1.05rem; color: #f8fafc; margin-bottom: 4px; }
+        .info-overlay p { font-size: 0.8rem; color: #94a3b8; }
+
+        /* 手機與窄螢幕 (RWD 優化) */
+        @media (max-width: 768px) {
+            .control-panel {
+                width: 290px;
+            }
+            .info-overlay h1 { font-size: 0.92rem; }
+            .info-overlay p { font-size: 0.72rem; }
+            .panel-toggle-btn {
+                padding: 6px 10px;
+                font-size: 0.8rem;
+            }
+        }
+    </style>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+
+    <!-- 獨立於面板外的醒目懸浮開關按鈕 -->
+    <button class="panel-toggle-btn" id="btn-toggle-panel" title="切換控制面板">
+        <span id="toggle-icon">◀</span>
+        <span id="toggle-text">收合面板</span>
+    </button>
+
+    <div id="canvas-container">
+        <canvas id="trail-canvas"></canvas>
+        <div class="info-overlay">
+            <h1>第三人稱：3D 天球觀測視角</h1>
+            <p>可按住滑鼠左鍵/單指旋轉視角，雙指/滾輪縮放視野</p>
+        </div>
+    </div>
+
+    <!-- 右側控制面板 -->
+    <div class="control-panel" id="control-panel">
+        <div class="panel-header">
+            <h2>控制面板</h2>
+        </div>
+
+        <h3 style="font-size:0.9rem; color:#38bdf8; margin-top:4px;">1. 觀測緯度設定</h3>
+        <div class="control-group">
+            <label>緯度: <span class="val-badge" id="lat-val">23.5° N</span></label>
+            <input type="range" id="lat-slider" min="-90" max="90" value="23.5" step="0.5">
+        </div>
+        <div class="btn-grid-4">
+            <button id="btn-lat-eq" class="action-btn">赤道 0°</button>
+            <button id="btn-lat-tw" class="action-btn active">台灣 23.5°</button>
+            <button id="btn-lat-np" class="action-btn">北極 90°</button>
+            <button id="btn-lat-sp" class="action-btn">南極 -90°</button>
+        </div>
+
+        <h3 style="font-size:0.9rem; color:#38bdf8; margin-top:8px;">2. 視覺樣式微調</h3>
+        <div class="control-group">
+            <label>星點大小: <span class="val-badge" id="star-size-val">3.0</span></label>
+            <input type="range" id="star-size-slider" min="0.5" max="6.0" value="3.0" step="0.1">
+        </div>
+        <div class="control-group">
+            <label>星軌粗細: <span class="val-badge" id="trail-width-val">2.0</span></label>
+            <input type="range" id="trail-width-slider" min="0.5" max="5.0" value="2.0" step="0.1">
+        </div>
+
+        <h3 style="font-size:0.9rem; color:#38bdf8; margin-top:8px;">3. 太陽周日運動軌跡</h3>
+        <div class="sub-group">
+            <label class="toggle-row">
+                <span style="color:#fde047;">夏至 (Dec +23.5°)</span>
+                <input type="checkbox" id="chk-sun-summer" checked>
+            </label>
+            <label class="toggle-row">
+                <span style="color:#facc15;">春/秋分 (Dec 0°)</span>
+                <input type="checkbox" id="chk-sun-equinox" checked>
+            </label>
+            <label class="toggle-row">
+                <span style="color:#fb923c;">冬至 (Dec -23.5°)</span>
+                <input type="checkbox" id="chk-sun-winter" checked>
+            </label>
+        </div>
+
+        <h3 style="font-size:0.9rem; color:#38bdf8; margin-top:8px;">4. 顯示與軸線控制</h3>
+        <label class="toggle-row">
+            <span>顯示地球自轉軸 (黃虛線)</span>
+            <input type="checkbox" id="chk-axis" checked>
+        </label>
+        <label class="toggle-row">
+            <span>顯示地平圈與方位標示</span>
+            <input type="checkbox" id="chk-horizon" checked>
+        </label>
+        <label class="toggle-row">
+            <span>顯示漸隱星軌 (Trails)</span>
+            <input type="checkbox" id="chk-trails" checked>
+        </label>
+
+        <h3 style="font-size:0.9rem; color:#38bdf8; margin-top:8px;">5. 運行控制</h3>
+        <div class="control-group">
+            <label>旋轉速度: <span class="val-badge" id="speed-val">1.0x</span></label>
+            <input type="range" id="speed-slider" min="0" max="5" value="1" step="0.1">
+        </div>
+        <div class="btn-grid">
+            <button id="btn-toggle-play" class="action-btn">Pause / 暫停</button>
+            <button id="btn-reset-cam" class="action-btn">重置視角</button>
+        </div>
+    </div>
+
+    <script>
+        // --- 狀態管理 ---
+        const state = {
+            latitude: 23.5,
+            speed: 1.0,
+            isPlaying: true,
+            showTrails: true,
+            starSize: 3.0,
+            trailWidth: 2.0,
+            showSummer: true,
+            showEquinox: true,
+            showWinter: true
+        };
+
+        // --- Three.js 場景建置 ---
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x000000, 0.0015);
+
+        const camera = new THREE.PerspectiveCamera(60, container.clientWidth / container.clientHeight, 0.1, 1000);
+        camera.position.set(0, 75, 150);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(container.clientWidth, container.clientHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        container.appendChild(renderer.domElement);
+
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.minDistance = 30;
+        controls.maxDistance = 300;
+
+        // --- 天球結構層級 ---
+        const celestialWorld = new THREE.Group();
+        scene.add(celestialWorld);
+
+        const celestialSphere = new THREE.Group();
+        celestialWorld.add(celestialSphere);
+
+        // --- STREAMING_CHUNK: Adding horizon, compass markers, and polar axis ---
+        // --- 地平圈與方位標示 ---
+        const observerGround = new THREE.Group();
+        scene.add(observerGround);
+
+        const horizonGeo = new THREE.RingGeometry(0.1, 100, 64);
+        horizonGeo.rotateX(-Math.PI / 2);
+        const horizonMat = new THREE.MeshBasicMaterial({ color: 0x0284c7, side: THREE.DoubleSide, transparent: true, opacity: 0.5 });
+        const horizonMesh = new THREE.Mesh(horizonGeo, horizonMat);
+        observerGround.add(horizonMesh);
+
+        const createCompassMarker = (text, color, pos) => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 128; canvas.height = 128;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = color;
+            ctx.font = 'Bold 72px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, 64, 64);
+
+            const texture = new THREE.CanvasTexture(canvas);
+            const spriteMat = new THREE.SpriteMaterial({ map: texture });
+            const sprite = new THREE.Sprite(spriteMat);
+            sprite.scale.set(12, 12, 1);
+            sprite.position.copy(pos);
+            observerGround.add(sprite);
+        };
+
+        createCompassMarker('東 E', '#38bdf8', new THREE.Vector3(80, 2, 0));
+        createCompassMarker('西 W', '#38bdf8', new THREE.Vector3(-80, 2, 0));
+        createCompassMarker('南 S', '#38bdf8', new THREE.Vector3(0, 2, 80));
+        createCompassMarker('北 N', '#f43f5e', new THREE.Vector3(0, 2, -80));
+
+        // --- 地球自轉軸 ---
+        const axisGeo = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(0, -130, 0),
+            new THREE.Vector3(0, 130, 0)
+        ]);
+        const axisMat = new THREE.LineDashedMaterial({ color: 0xeab308, dashSize: 4, gapSize: 2, linewidth: 2 });
+        const axisLine = new THREE.Line(axisGeo, axisMat);
+        axisLine.computeLineDistances();
+        celestialWorld.add(axisLine);
+
+        // --- STREAMING_CHUNK: Constructing seasonal sun trajectories ---
+        // --- 太陽軌跡建構函式 ---
+        const R_SKY = 95;
+        function createSunPathGroup(declinationDeg, colorHex) {
+            const group = new THREE.Group();
+            const decRad = THREE.MathUtils.degToRad(declinationDeg);
+            const yOffset = R_SKY * Math.sin(decRad);
+            const ringRadius = R_SKY * Math.cos(decRad);
+
+            // 1. 軌跡虛線圓環
+            const points = [];
+            const segs = 128;
+            for (let i = 0; i <= segs; i++) {
+                const theta = (i / segs) * Math.PI * 2;
+                points.push(new THREE.Vector3(ringRadius * Math.cos(theta), yOffset, ringRadius * Math.sin(theta)));
+            }
+            const lineGeo = new THREE.BufferGeometry().setFromPoints(points);
+            const lineMat = new THREE.LineDashedMaterial({ color: colorHex, dashSize: 3, gapSize: 2, linewidth: 2 });
+            const pathLine = new THREE.Line(lineGeo, lineMat);
+            pathLine.computeLineDistances();
+            group.add(pathLine);
+
+            // 2. 太陽球體
+            const sunGeo = new THREE.SphereGeometry(3.5, 16, 16);
+            const sunMat = new THREE.MeshBasicMaterial({ color: colorHex });
+            const sunMesh = new THREE.Mesh(sunGeo, sunMat);
+            sunMesh.position.set(ringRadius, yOffset, 0);
+            group.add(sunMesh);
+
+            return group;
+        }
+
+        const sunPathSummer = createSunPathGroup(23.5, 0xfde047);  // 夏至
+        const sunPathEquinox = createSunPathGroup(0, 0xfacc15);     // 春秋分
+        const sunPathWinter = createSunPathGroup(-23.5, 0xfb923c);  // 冬至
+
+        celestialSphere.add(sunPathSummer);
+        celestialSphere.add(sunPathEquinox);
+        celestialSphere.add(sunPathWinter);
+
+        // --- STREAMING_CHUNK: Generating 3D starfield point cloud ---
+        // --- 產生 3D 星空點雲 ---
+        const numStars = 500;
+        const starPositions = [];
+        const starColors = [];
+
+        for (let i = 0; i < numStars; i++) {
+            const u = Math.random();
+            const v = Math.random();
+            const theta = u * 2.0 * Math.PI;
+            const phi = Math.acos(2.0 * v - 1.0);
+
+            const x = R_SKY * Math.sin(phi) * Math.cos(theta);
+            const y = R_SKY * Math.cos(phi);
+            const z = R_SKY * Math.sin(phi) * Math.sin(theta);
+
+            starPositions.push(x, y, z);
+
+            const col = new THREE.Color();
+            col.setHSL(0.55 + Math.random() * 0.15, 0.7, 0.9);
+            starColors.push(col.r, col.g, col.b);
+        }
+
+        const starGeo = new THREE.BufferGeometry();
+        starGeo.setAttribute('position', new THREE.Float32BufferAttribute(starPositions, 3));
+        starGeo.setAttribute('color', new THREE.Float32BufferAttribute(starColors, 3));
+
+        const starMat = new THREE.PointsMaterial({
+            size: state.starSize,
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.95
+        });
+        const starPoints = new THREE.Points(starGeo, starMat);
+        celestialSphere.add(starPoints);
+
+        // --- STREAMING_CHUNK: Managing 2D star trail canvas overlays ---
+        // --- 星軌 CanvasOverlay ---
+        const trailCanvas = document.getElementById('trail-canvas');
+        const trailCtx = trailCanvas.getContext('2d');
+
+        function resizeTrailCanvas() {
+            trailCanvas.width = container.clientWidth;
+            trailCanvas.height = container.clientHeight;
+        }
+        resizeTrailCanvas();
+
+        let prevProjectedStars = [];
+
+        function updateTrails() {
+            if (!state.showTrails) {
+                trailCtx.clearRect(0, 0, trailCanvas.width, trailCanvas.height);
+                prevProjectedStars = [];
+                return;
+            }
+
+            trailCtx.save();
+            trailCtx.globalCompositeOperation = 'destination-out';
+            trailCtx.fillStyle = 'rgba(0, 0, 0, 0.05)';
+            trailCtx.fillRect(0, 0, trailCanvas.width, trailCanvas.height);
+            trailCtx.restore();
+
+            if (!state.isPlaying) return;
+
+            const currentProjected = [];
+            const posAttr = starGeo.attributes.position;
+            const tempVec = new THREE.Vector3();
+
+            for (let i = 0; i < posAttr.count; i += 2) {
+                tempVec.fromBufferAttribute(posAttr, i);
+                tempVec.applyMatrix4(starPoints.matrixWorld);
+                tempVec.project(camera);
+
+                if (tempVec.z < 1.0) {
+                    const sx = (tempVec.x * 0.5 + 0.5) * trailCanvas.width;
+                    const sy = (-(tempVec.y * 0.5) + 0.5) * trailCanvas.height;
+                    currentProjected[i] = { x: sx, y: sy };
+
+                    if (prevProjectedStars[i]) {
+                        const px = prevProjectedStars[i].x;
+                        const py = prevProjectedStars[i].y;
+                        const dist = Math.hypot(sx - px, sy - py);
+
+                        if (dist < 60) {
+                            trailCtx.beginPath();
+                            trailCtx.moveTo(px, py);
+                            trailCtx.lineTo(sx, sy);
+                            trailCtx.strokeStyle = 'rgba(56, 189, 248, 0.75)';
+                            trailCtx.lineWidth = state.trailWidth;
+                            trailCtx.stroke();
+                        }
+                    }
+                } else {
+                    currentProjected[i] = null;
+                }
+            }
+            prevProjectedStars = currentProjected;
+        }
+
+        function clearTrails() {
+            trailCtx.clearRect(0, 0, trailCanvas.width, trailCanvas.height);
+            prevProjectedStars = [];
+        }
+
+        function updateLatitude() {
+            const rad = THREE.MathUtils.degToRad(state.latitude);
+            celestialWorld.rotation.x = rad - (Math.PI / 2);
+            document.getElementById('lat-val').innerText = `${Math.abs(state.latitude)}° ${state.latitude >= 0 ? 'N' : 'S'}`;
+            clearTrails();
+        }
+
+        // --- STREAMING_CHUNK: Binding UI toggle interactions and event handlers ---
+        // --- 控制面板 收合 / 展開 邏輯 ---
+        const panel = document.getElementById('control-panel');
+        const toggleBtn = document.getElementById('btn-toggle-panel');
+        const toggleIcon = document.getElementById('toggle-icon');
+        const toggleText = document.getElementById('toggle-text');
+        let isPanelCollapsed = false;
+
+        function togglePanel() {
+            isPanelCollapsed = !isPanelCollapsed;
+            if (isPanelCollapsed) {
+                panel.classList.add('collapsed');
+                toggleIcon.innerText = '⚙️';
+                toggleText.innerText = '開啟選單';
+            } else {
+                panel.classList.remove('collapsed');
+                toggleIcon.innerText = '◀';
+                toggleText.innerText = '收合面板';
+            }
+            
+            setTimeout(() => {
+                onWindowResize();
+            }, 300);
+        }
+
+        toggleBtn.addEventListener('click', togglePanel);
+
+        // --- 事件處理與 UI 綁定 ---
+        function onWindowResize() {
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            resizeTrailCanvas();
+            clearTrails();
+        }
+
+        window.addEventListener('resize', onWindowResize);
+        controls.addEventListener('change', clearTrails);
+
+        // 緯度控制
+        const latSlider = document.getElementById('lat-slider');
+        latSlider.addEventListener('input', (e) => {
+            state.latitude = parseFloat(e.target.value);
+            updateLatitude();
+        });
+
+        const setLatPreset = (val, btnId) => {
+            state.latitude = val;
+            latSlider.value = val;
+            ['btn-lat-eq', 'btn-lat-tw', 'btn-lat-np', 'btn-lat-sp'].forEach(id => document.getElementById(id).classList.remove('active'));
+            document.getElementById(btnId).classList.add('active');
+            updateLatitude();
+        };
+
+        document.getElementById('btn-lat-eq').addEventListener('click', () => setLatPreset(0, 'btn-lat-eq'));
+        document.getElementById('btn-lat-tw').addEventListener('click', () => setLatPreset(23.5, 'btn-lat-tw'));
+        document.getElementById('btn-lat-np').addEventListener('click', () => setLatPreset(90, 'btn-lat-np'));
+        document.getElementById('btn-lat-sp').addEventListener('click', () => setLatPreset(-90, 'btn-lat-sp'));
+
+        // 星點與星軌粗細控制
+        document.getElementById('star-size-slider').addEventListener('input', (e) => {
+            state.starSize = parseFloat(e.target.value);
+            starMat.size = state.starSize;
+            document.getElementById('star-size-val').innerText = state.starSize.toFixed(1);
+        });
+
+        document.getElementById('trail-width-slider').addEventListener('input', (e) => {
+            state.trailWidth = parseFloat(e.target.value);
+            document.getElementById('trail-width-val').innerText = state.trailWidth.toFixed(1);
+        });
+
+        // 太陽軌跡開關
+        document.getElementById('chk-sun-summer').addEventListener('change', (e) => sunPathSummer.visible = e.target.checked);
+        document.getElementById('chk-sun-equinox').addEventListener('change', (e) => sunPathEquinox.visible = e.target.checked);
+        document.getElementById('chk-sun-winter').addEventListener('change', (e) => sunPathWinter.visible = e.target.checked);
+
+        // 其它控制項目
+        document.getElementById('speed-slider').addEventListener('input', (e) => {
+            state.speed = parseFloat(e.target.value);
+            document.getElementById('speed-val').innerText = `${state.speed.toFixed(1)}x`;
+        });
+
+        document.getElementById('btn-toggle-play').addEventListener('click', (e) => {
+            state.isPlaying = !state.isPlaying;
+            e.target.innerText = state.isPlaying ? 'Pause / 暫停' : 'Play / 播放';
+        });
+
+        document.getElementById('btn-reset-cam').addEventListener('click', () => {
+            camera.position.set(0, 75, 150);
+            controls.target.set(0, 0, 0);
+            controls.update();
+            clearTrails();
+        });
+
+        document.getElementById('chk-axis').addEventListener('change', (e) => axisLine.visible = e.target.checked);
+        document.getElementById('chk-horizon').addEventListener('change', (e) => observerGround.visible = e.target.checked);
+        document.getElementById('chk-trails').addEventListener('change', (e) => {
+            state.showTrails = e.target.checked;
+            clearTrails();
+        });
+
+        // 初始化緯度
+        updateLatitude();
+
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const delta = clock.getDelta();
+
+            if (state.isPlaying) {
+                const deltaAngle = delta * 0.15 * state.speed;
+                celestialSphere.rotation.y -= deltaAngle;
+            }
+
+            controls.update();
+            renderer.render(scene, camera);
+
+            updateTrails();
+        }
+
+        animate();
+    </script>
+</body>
+</html>
